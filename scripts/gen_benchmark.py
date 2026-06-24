@@ -1,6 +1,11 @@
 import os
+import sys
 import shutil
 from time import sleep
+
+# Add parent directory to path so we can import from src/
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from src.util import generate_spark_files, retrieve_filenames_from_dir
 
 

@@ -1,0 +1,511 @@
+-- start file keccak-util.adb
+
+package body Keccak.Util
+with SPARK_Mode => On
+is
+
+   ---------------------
+   --  To_Byte_Array  --
+   ---------------------
+
+   procedure To_Byte_Array (Bytes :    out Types.Byte_Array;
+                            Str   : in     String)
+   is
+   begin
+      for I in 0 .. Bytes'Length - 1 loop
+         Bytes (Bytes'First + I) := Types.Byte (Character'Pos (Str (Str'First + I)));
+
+      end loop;
+   end To_Byte_Array;
+
+   ------------------------
+   --  Left_Encode_NIST  --
+   ------------------------
+
+   function Left_Encode_NIST (Length : in Natural) return Types.Byte_Array
+   is
+      Encoded : Types.Byte_Array (1 .. (Natural'Size / 8) + 2) := (others => 0);
+
+      X       : Natural := Length;
+      N       : Natural := 0;
+
+   begin
+
+      for I in Positive range 1 .. (Natural'Size / 8) + 1 loop
+
+         Encoded (Encoded'Last - N) := Types.Byte (X mod 256);
+
+         X := X / 256;
+         N := N + 1;
+
+         exit when X = 0;
+
+      end loop;
+
+      Encoded (Encoded'Last - N) := Types.Byte (N);
+
+      return Encoded (Encoded'Last - N .. Encoded'Last);
+   end Left_Encode_NIST;
+
+   -----------------------------------
+   --  Left_Encode_NIST_Bit_Length  --
+   -----------------------------------
+
+   function Left_Encode_NIST_Bit_Length (Byte_Length : in Natural) return Types.Byte_Array
+   is
+      Encoded : Types.Byte_Array (1 .. Natural'Size + 1) := (others => 0);
+
+      X       : Natural := Byte_Length;
+      N       : Natural := 0;
+
+   begin
+
+      Encoded (Encoded'Last - N) := Types.Byte (X mod 256) * 8;
+
+      X := X / 32;
+      N := N + 1;
+
+      for I in Positive range 2 .. Natural'Size loop
+
+         exit when X = 0;
+
+         Encoded (Encoded'Last - N) := Types.Byte (X mod 256);
+
+         X := X / 256;
+         N := N + 1;
+
+      end loop;
+
+      Encoded (Encoded'Last - N) := Types.Byte (N);
+
+      return Encoded (Encoded'Last - N .. Encoded'Last);
+   end Left_Encode_NIST_Bit_Length;
+
+   -------------------------
+   --  Right_Encode_NIST  --
+   -------------------------
+
+   function Right_Encode_NIST (Length : in Natural) return Types.Byte_Array
+   is
+      Encoded : Types.Byte_Array (1 .. (Natural'Size / 8) + 2) := (others => 0);
+
+      X       : Natural := Length;
+      N       : Natural := 0;
+
+   begin
+
+      for I in Positive range 1 .. (Natural'Size / 8) + 1 loop
+
+         Encoded (Encoded'Last - (N + 1)) := Types.Byte (X mod 256);
+
+         X := X / 256;
+         N := N + 1;
+
+         exit when X = 0;
+
+      end loop;
+
+      Encoded (Encoded'Last) := Types.Byte (N);
+
+      return Encoded (Encoded'Last - N .. Encoded'Last);
+   end Right_Encode_NIST;
+
+   -----------------------------------
+   --  Right_Encode_NIST_Long_Long  --
+   -----------------------------------
+
+   function Right_Encode_NIST_Long_Long (Length : in Long_Long_Integer) return Types.Byte_Array
+   is
+      Encoded : Types.Byte_Array (1 .. (Long_Long_Integer'Size / 8) + 2) := (others => 0);
+
+      X       : Long_Long_Integer := Length;
+      N       : Natural := 0;
+
+   begin
+
+      for I in Positive range 1 .. (Long_Long_Integer'Size / 8) + 1 loop
+
+         Encoded (Encoded'Last - (N + 1)) := Types.Byte (X mod 256);
+
+         X := X / 256;
+         N := N + 1;
+
+         exit when X = 0;
+
+      end loop;
+
+      Encoded (Encoded'Last) := Types.Byte (N);
+
+      return Encoded (Encoded'Last - N .. Encoded'Last);
+   end Right_Encode_NIST_Long_Long;
+
+   ------------------------------------
+   --  Right_Encode_NIST_Bit_Length  --
+   ------------------------------------
+
+   function Right_Encode_NIST_Bit_Length (Byte_Length : in Natural) return Types.Byte_Array
+   is
+      Encoded : Types.Byte_Array (1 .. (Natural'Size / 8) + 2) := (others => 0);
+
+      X       : Natural := Byte_Length;
+      N       : Natural := 0;
+
+   begin
+
+      Encoded (Encoded'Last - (N + 1)) := Types.Byte (X mod 256) * 8;
+
+      X := X / 32;
+      N := N + 1;
+
+      for I in Positive range 2 .. (Natural'Size / 8) + 1 loop
+
+         exit when X = 0;
+
+         Encoded (Encoded'Last - (N + 1)) := Types.Byte (X mod 256);
+
+         X := X / 256;
+         N := N + 1;
+
+      end loop;
+
+      Encoded (Encoded'Last) := Types.Byte (N);
+
+      return Encoded (Encoded'Last - N .. Encoded'Last);
+   end Right_Encode_NIST_Bit_Length;
+
+   ------------------------
+   --  Right_Encode_K12  --
+   ------------------------
+
+   function Right_Encode_K12 (Length : in Long_Long_Integer) return Types.Byte_Array
+   is
+      Encoded : Types.Byte_Array (1 .. (Long_Long_Integer'Size / 8) + 2) := (others => 0);
+
+      X       : Long_Long_Integer := Length;
+      N       : Natural := 0;
+
+   begin
+
+      for I in Positive range 1 .. (Long_Long_Integer'Size / 8) + 1 loop
+
+         exit when X = 0;
+
+         Encoded (Encoded'Last - (N + 1)) := Types.Byte (X mod 256);
+
+         X := X / 256;
+         N := N + 1;
+
+      end loop;
+
+      Encoded (Encoded'Last) := Types.Byte (N);
+
+      return Encoded (Encoded'Last - N .. Encoded'Last);
+   end Right_Encode_K12;
+
+   ---------------
+   --  Compare  --
+   ---------------
+
+   procedure Compare (A1          : in     Keccak.Types.Byte_Array;
+                      A2          : in     Keccak.Types.Byte_Array;
+                      Accumulator : in out Keccak.Types.Byte) is
+   begin
+      for I in 0 .. A1'Length - 1 loop
+         Accumulator := Accumulator or (A1 (A1'First + I) xor A2 (A2'First + I));
+      end loop;
+   end Compare;
+
+end Keccak.Util;
+
+-- end file keccak-util.adb
+
+
+-- start file keccak-types.ads
+
+-------------------------------------------------------------------------------
+--  This package defines common types used throughout the various packages
+--  in the library.
+-------------------------------------------------------------------------------
+
+with Interfaces;
+
+--  @summary
+--  Common type definitions.
+package Keccak.Types
+with SPARK_Mode => On
+is
+
+   type Unsigned_1 is mod 2**1 with Size => 1;
+   type Unsigned_2 is mod 2**2 with Size => 2;
+   type Unsigned_4 is mod 2**4 with Size => 4;
+
+   subtype Byte is Interfaces.Unsigned_8
+     with Object_Size => 8;
+
+   subtype Index_Number is Natural range 0 .. Natural'Last - 1;
+   type Byte_Array is array (Index_Number range <>) of Byte
+     with Component_Size => 8;
+
+   Null_Byte_Array : constant Byte_Array (1 .. 0) := (others => 0);
+
+   ------------------
+   --  Shift_Left  --
+   ------------------
+
+   function Shift_Left_1 (Value  : in Unsigned_1;
+                          Amount : in Natural) return Unsigned_1
+     with Global => null,
+     Inline,
+     Pre => Amount <= 1;
+
+   function Shift_Left_2 (Value  : in Unsigned_2;
+                          Amount : in Natural) return Unsigned_2
+     with Global => null,
+     Inline,
+     Pre => Amount <= 2;
+
+   function Shift_Left_4 (Value  : in Unsigned_4;
+                          Amount : in Natural) return Unsigned_4
+     with Global => null,
+     Inline,
+     Pre => Amount <= 4;
+
+   -------------------
+   --  Shift_Right  --
+   -------------------
+
+   function Shift_Right_1 (Value  : in Unsigned_1;
+                           Amount : in Natural) return Unsigned_1
+     with Global => null,
+     Inline,
+     Pre => Amount <= 1;
+
+   function Shift_Right_2 (Value  : in Unsigned_2;
+                           Amount : in Natural) return Unsigned_2
+     with Global => null,
+     Inline,
+     Pre => Amount <= 2;
+
+   function Shift_Right_4 (Value  : in Unsigned_4;
+                           Amount : in Natural) return Unsigned_4
+     with Global => null,
+     Inline,
+     Pre => Amount <= 4;
+
+   -------------------
+   --  Rotate_Left  --
+   -------------------
+
+   function Rotate_Left_1 (Value  : in Unsigned_1;
+                           Amount : in Natural) return Unsigned_1
+     with Global => null,
+     Inline,
+     Pre => Amount <= 1;
+
+   function Rotate_Left_2 (Value  : in Unsigned_2;
+                           Amount : in Natural) return Unsigned_2
+     with Global => null,
+     Inline,
+     Pre => Amount <= 2;
+
+   function Rotate_Left_4 (Value  : in Unsigned_4;
+                           Amount : in Natural) return Unsigned_4
+     with Global => null,
+     Inline,
+     Pre => Amount <= 4;
+
+private
+   use type Interfaces.Unsigned_8;
+
+   ------------------
+   --  Shift_Left  --
+   ------------------
+
+   function Shift_Left_1 (Value  : in Unsigned_1;
+                          Amount : in Natural) return Unsigned_1
+   is (Unsigned_1 (Interfaces.Shift_Left (Byte (Value), Amount) and (2**1 - 1)));
+
+   function Shift_Left_2 (Value  : in Unsigned_2;
+                          Amount : in Natural) return Unsigned_2
+   is (Unsigned_2 (Interfaces.Shift_Left (Byte (Value), Amount) and (2**2 - 1)));
+
+   function Shift_Left_4 (Value  : in Unsigned_4;
+                          Amount : in Natural) return Unsigned_4
+   is (Unsigned_4 (Interfaces.Shift_Left (Byte (Value), Amount) and (2**4 - 1)));
+
+   -------------------
+   --  Shift_Right  --
+   -------------------
+
+   function Shift_Right_1 (Value  : in Unsigned_1;
+                           Amount : in Natural) return Unsigned_1
+   is (Unsigned_1 (Interfaces.Shift_Right (Byte (Value), Amount) and (2**1 - 1)));
+
+   function Shift_Right_2 (Value  : in Unsigned_2;
+                           Amount : in Natural) return Unsigned_2
+   is (Unsigned_2 (Interfaces.Shift_Right (Byte (Value), Amount) and (2**2 - 1)));
+
+   function Shift_Right_4 (Value  : in Unsigned_4;
+                           Amount : in Natural) return Unsigned_4
+   is (Unsigned_4 (Interfaces.Shift_Right (Byte (Value), Amount) and (2**4 - 1)));
+
+   -------------------
+   --  Rotate_Left  --
+   -------------------
+
+   function Rotate_Left_1 (Value  : in Unsigned_1;
+                           Amount : in Natural) return Unsigned_1
+   is (Value);
+
+   function Rotate_Left_2 (Value  : in Unsigned_2;
+                           Amount : in Natural) return Unsigned_2
+   is (Shift_Left_2 (Value, Amount) or Shift_Right_2 (Value, 2 - Amount));
+
+   function Rotate_Left_4 (Value  : in Unsigned_4;
+                           Amount : in Natural) return Unsigned_4
+   is (Shift_Left_4 (Value, Amount) or Shift_Right_4 (Value, 4 - Amount));
+
+end Keccak.Types;
+
+-- end file keccak-types.ads
+
+
+-- start file keccak-util.ads
+
+with Interfaces;
+with Keccak.Types;
+
+package Keccak.Util
+with SPARK_Mode => On
+is
+   use type Interfaces.Unsigned_8;
+
+   procedure To_Byte_Array (Bytes :    out Types.Byte_Array;
+                            Str   : in     String)
+     with Inline,
+     Relaxed_Initialization => Bytes,
+     Global => null,
+     Pre => Bytes'Length = Str'Length,
+     Post => Bytes'Initialized;
+   --  Return the byte array representation of a string.
+   --
+   --  This function uses an Ada.Unchecked_Conversion internally to convert the
+   --  String to the byte array.
+   --
+   --  @param Str The string to convert to a byte array.
+
+   function Left_Encode_NIST (Length : in Natural) return Types.Byte_Array
+     with
+       Post => (Left_Encode_NIST'Result'Length in 1 .. (Natural'Size / 8) + 2
+                and Left_Encode_NIST'Result'First in 1 .. (Natural'Size / 8) + 2);
+   --  Encode a length using the left_encode(n) method described in
+   --  NIST SP 800-185.
+   --
+   --  Example, the length 16#ABCDEF# will be encoded as the byte array
+   --  (3, 16#AB#, 16#CD#, 16#EF#)
+
+   function Left_Encode_NIST_Bit_Length (Byte_Length : in Natural)
+                                         return Types.Byte_Array
+     with
+       Post => (Left_Encode_NIST_Bit_Length'Result'Length
+                  in 1 .. Natural'Size + 1
+
+                and Left_Encode_NIST_Bit_Length'Result'First
+                  in 1 .. Natural'Size + 1);
+   --  A version of left_encode(n) (as defined by NIST) where the output
+   --  represents the input value multiplied by 8.
+   --
+   --  The output of calling Left_Encode_NIST_Bit_Length (N) is equivalent
+   --  to calling Left_Encode_NIST (N * 8). This function is useful to avoid
+   --  doing the multiplication in the call to Left_Encode_NIST and thus
+   --  avoiding the possibility of an integer overflow.
+   --
+   --  @param Byte_Length The length to left_encode. Usually represents a
+   --     quantity of bytes, as the output represents this value multiplied by 8.
+
+   function Right_Encode_NIST (Length : in Natural) return Types.Byte_Array
+     with
+       Post => (Right_Encode_NIST'Result'Length
+                  in 1 .. (Natural'Size / 8) + 2
+
+                and Right_Encode_NIST'Result'First
+                  in 1 .. (Natural'Size / 8) + 2);
+   --  Encode a length using the right_encode(n) method described in
+   --  NIST SP 800-185.
+   --
+   --  Example, the length 16#ABCDEF# will be encoded as the byte array
+   --  (16#AB#, 16#CD#, 16#EF#, 3)
+
+   function Right_Encode_NIST_Long_Long (Length : in Long_Long_Integer)
+                                         return Types.Byte_Array
+     with
+       Pre => Length >= 0,
+       Post => (Right_Encode_NIST_Long_Long'Result'Length
+                  in 1 .. (Long_Long_Integer'Size / 8) + 2
+
+                and Right_Encode_NIST_Long_Long'Result'First
+                  in 1 .. (Long_Long_Integer'Size / 8) + 2);
+   --  Equivalent to Right_Encode_NIST, except this function accepts a much
+   --  longer input range (as a Long_Long_Integer).
+
+   function Right_Encode_NIST_Bit_Length (Byte_Length : in Natural)
+                                          return Types.Byte_Array
+     with
+       Post => (Right_Encode_NIST_Bit_Length'Result'Length
+                  in 1 .. Natural'Size + 1
+
+                and Right_Encode_NIST_Bit_Length'Result'First
+                  in 1 .. Natural'Size + 1);
+   --  A version of right_encode(n) (as defined by NIST) where the output
+   --  represents the input value multiplied by 8.
+   --
+   --  The output of calling Right_Encode_NIST_Bit_Length (N) is equivalent
+   --  to calling Right_Encode_NIST (N * 8). This function is useful to avoid
+   --  doing the multiplication in the call to Right_Encode_NIST and thus
+   --  avoiding the possibility of an integer overflow.
+   --
+   --  @param Byte_Length The length to right_encode. Usually represents a
+   --     quantity of bytes, as the output represents this value multiplied by 8.
+
+   function Right_Encode_K12 (Length : in Long_Long_Integer)
+                              return Types.Byte_Array
+     with
+       Pre => Length >= 0,
+       Post => (Right_Encode_K12'Result'Length
+                  in 1 .. (Long_Long_Integer'Size / 8) + 2
+
+                and Right_Encode_K12'Result'First
+                  in 1 .. (Long_Long_Integer'Size / 8) + 2);
+   --  Version of right_encode(n) as defined by the KangarooTwelve document.
+   --
+   --  The definition of right_encode(n) in the KangarooTwelve document is
+   --  different to the definition in NIST SP 800-185, and they produce different
+   --  outputs.
+
+   procedure Compare (A1          : in     Keccak.Types.Byte_Array;
+                      A2          : in     Keccak.Types.Byte_Array;
+                      Accumulator : in out Keccak.Types.Byte)
+     with Global => null,
+     Depends => (Accumulator =>+ (A1, A2)),
+     Pre => A1'Length = A2'Length;
+   --  Compare two arrays in constant time.
+   --
+   --  If the two arrays are equal, then the Accumulator will retain its
+   --  initial value (e.g. zero). Otherwise, the Accumulator will be set
+   --  to a non-zero value.
+
+end Keccak.Util;
+
+-- end file keccak-util.ads
+
+
+-- start file keccak.ads
+
+--  @summary
+--  Parent package for the Keccak-related components.
+package Keccak
+with SPARK_Mode => On
+is
+end Keccak;
+
+-- end file keccak.ads

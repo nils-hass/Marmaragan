@@ -1,5 +1,8 @@
+import argparse
+from dotenv import load_dotenv
 from src.run_benchmark import *
 
+load_dotenv()
 
 # PARAMS
 
@@ -7,23 +10,23 @@ from src.run_benchmark import *
 # System Message
 # -----------------------------------------------------------------------
 system_message="""\
-You are a Spark2014/ADA programmer with strong logical reasoning abilities. 
-You are tasked with fixing implemenations of Spark2014/ADA programs. You will be given an Implementation of a program, as
+You are a Spark2014/Ada programmer with strong logical reasoning abilities. 
+You are tasked with fixing implemenations of Spark2014/Ada programs. You will be given an Implementation of a program, as
 well as a specification of the program. You must complete the package body of the given program, inserting one or multiple pragma statements.
 You must not modify the code in any other way, except to add for loops and if statements that enclose only pragma statements, and do not modify the functionality.
 """
 
 system_message_with_mediums = """\
-You are a Spark2014/ADA programmer with strong logical reasoning abilities. 
-You will be given an Implementation of a program, a specification of the program and the mediums that GnatProve raised for it.
+You are a Spark2014/Ada programmer with strong logical reasoning abilities. 
+You will be given an Implementation of a program, a specification of the program and the mediums that GNATprove raised for it.
 You must complete the package body of the given program, inserting one or multiple pragma statements.
 You must not modify the code in any other way, except to add for loops and if statements that enclose only pragma statements, and do not modify the functionality.
 """
 
 # The original 4/16 system message
 original_system_message = """\
-You are a Spark2014/ADA programmer with strong logical reasoning abilities.
-You are tasked with fixing implemenations of Spark2014/ADA programs. You will be given an Implementation of a program, as
+You are a Spark2014/Ada programmer with strong logical reasoning abilities.
+You are tasked with fixing implemenations of Spark2014/Ada programs. You will be given an Implementation of a program, as
 well as a specification of the program. You must complete the package body of the given program, inserting a single "pragma Loop_Invariant" statement.
 You must not modify the code in any other way.
 """
@@ -166,18 +169,21 @@ Do not modify the code in any other way. Return the entire implementation file w
 # benchmark_file_paths = ["benchmarks/1-all_pragmas", "benchmarks/2-last_invariant_all_loops", 
                         # "benchmarks/3-one_assert", "benchmarks/4-all_pragmas_one_loop", "benchmarks/5-last_invariant_one_loop"]
 
-benchmark_file_paths = ["benchmarks/1-all_pragmas"]
+# benchmark_file_paths = ["benchmarks/1-all_pragmas"]
 # benchmark_file_paths = ["benchmarks/2-last_invariant_all_loops"]
-# benchmark_file_paths = ["benchmarks/3-one_assert"]
+benchmark_file_paths = ["benchmarks/3-one_assert"]
 # benchmark_file_paths = ["benchmarks/4-all_pragmas_one_loop"]
 # benchmark_file_paths = ["benchmarks/5-last_invariant_one_loop"]
 
-# GPT Model
+# benchmark_file_paths = ["benchmark2/all_pragmas"]
+# benchmark_file_paths = ["benchmark2/last_invariant_all_loops"]
+# benchmark_file_paths = ["benchmark2/one_assert"]
+# benchmark_file_paths = ["benchmark2/all_pragmas_one_loop"]
+# benchmark_file_paths = ["benchmark2/last_invariant_one_loop"]
+
+# LLM backend
 # -----------------------------------------------------------------------
-# model = "gpt-3.5-turbo-1106"
-# model = "gpt-4-0125-preview"
-# model = "gpt-4-0613"
-model = "gpt-4o-2024-05-13"
+llm_backend = "api"
 
 
 # N solutions
@@ -207,22 +213,41 @@ with_medium_in_prompt = True
 # benchmark_programs = [1,7,8,9,10,11,12,13,14,15,16]
 
 
-benchmark_programs = [3]
+benchmark_programs = list(range(1, 7))
 
 
 
 
-# Run the benchmark
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run SPARK benchmark with API or local LLM backend.")
+    parser.add_argument(
+        "--llm-backend",
+        choices=["api", "local"],
+        default=llm_backend,
+        help="LLM backend to use: 'api' (OpenAI-compatible) or 'local' (Ollama)."
+    )
+    parser.add_argument(
+        "--model",
+        required=True,
+        help="Model name to use. Example local model: qwen-27b-bf16-spark-verification"
+    )
+    return parser.parse_args()
 
-for benchmark_file in benchmark_file_paths:
-    benchmark = run_benchmark(
-        system_message=system_message_with_mediums,
-        prompt=natual_language_prompt,
-        benchmark_dir=benchmark_file,
-        gpt_model=model,
-        n_solutions=n,
-        retries=retries,
-        with_medium_in_prompt=with_medium_in_prompt,
-        benchmark_program_indices=benchmark_programs)
 
-    benchmark.run()
+if __name__ == "__main__":
+    args = parse_args()
+
+    for benchmark_file in benchmark_file_paths:
+        benchmark = run_benchmark(
+            system_message=system_message_with_mediums,
+            prompt=natual_language_prompt,
+            benchmark_dir=benchmark_file,
+            gpt_model=args.model,
+            n_solutions=n,
+            retries=retries,
+            with_medium_in_prompt=with_medium_in_prompt,
+            benchmark_program_indices=benchmark_programs,
+            llm_backend=args.llm_backend,
+        )
+
+        benchmark.run()

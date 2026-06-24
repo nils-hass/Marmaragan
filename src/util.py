@@ -4,6 +4,7 @@ from typing import List, Tuple
 import textwrap
 import os
 import subprocess
+import logging
 
 
 
@@ -178,11 +179,22 @@ def retrieve_benchmark_files(benchmark_directory: str, program_indices: List[int
         list[str]: The paths to the benchmark files
     """
     
+    if not os.path.isdir(benchmark_directory):
+        raise FileNotFoundError(
+            f"Benchmark directory not found: {benchmark_directory}. "
+            "Please check the path (e.g. 'benchmarks/...', 'benchmark2/...')."
+        )
+
     # Retrieve the names of all benchmark files
     benchmark_files = retrieve_filenames_from_dir(benchmark_directory)
     
     # Filter the benchmark files to only include those at the given indices
     benchmark_files = [file for file in benchmark_files if int(file.split('/')[-1].split('-')[0]) in program_indices]
+
+    if not benchmark_files:
+        raise ValueError(
+            f"No benchmark files found in '{benchmark_directory}' for indices {program_indices}."
+        )
     
     return benchmark_files
     
@@ -233,11 +245,13 @@ def generate_spark_files(file_path: str, directory_path: str) -> str:
                         os.mkdir(subdir_path)
                         
                     except FileExistsError:
-                        os.mk
+                        pass
                     
                     # Author: Emmanuel Debanne
                     # https://github.com/debanne/sparkilo/blob/main/sparkilo/gnat/gpr.py
                     # ---------------------------------------------------------------
+                    # Create valid Ada identifier for project name (replace hyphens with underscores)
+                    project_name = filename.split('.')[0].replace('-', '_')
                     gpr_file_name = f"{filename.split('.')[0]}.gpr"
                     gpr_file_path = os.path.join(subdir_path, gpr_file_name)
                     
@@ -245,9 +259,9 @@ def generate_spark_files(file_path: str, directory_path: str) -> str:
                     with open(gpr_file_path, 'w') as file:
                         gpr_file_content = textwrap.dedent(
                             f"""\
-                            project {f"{filename.split('.')[0]}"} is
+                            project {project_name} is
                                 for Source_Dirs use (".");
-                            end {f"{filename.split('.')[0]}"};
+                            end {project_name};
                             """
                         )
                     # ---------------------------------------------------------------
@@ -269,25 +283,33 @@ def run_gnatprove(gpr_filepath: str) -> str:
     gp_filepath (str): Path to the project file of the spark project to be proved.
 
     Returns:
-    str: The standard output from running gnatprove.
+    str: The combined standard output and standard error from running gnatprove.
 
     This function starts a subprocess for the given command, captures its standard
-    output, and then returns the output. 
+    output and standard error, and then returns the combined output. 
     """
+    
+    logger = logging.getLogger('gen_1')
 
     command = [
-        "gnatprove", f"-P{gpr_filepath}", "--steps=15000", "--level=4", "--prover=z3,cvc4,altergo"]
+        "gnatprove", f"-P{gpr_filepath}", "--steps=15000", "--level=4", "--prover=z3,cvc5,alt-ergo"]
 
     # Start the subprocess and capture its output
     process = subprocess.run(
         command,
         stdout=subprocess.PIPE,  # Capture standard output
-        stderr=subprocess.DEVNULL,  # Ignore standard error
+        stderr=subprocess.PIPE,  # Capture standard error (contains verification messages)
         text=True  # Decode the output automatically
     )
+    
+    # Combine stdout and stderr (mediums are in stderr)
+    combined_output = process.stdout + "\n" + process.stderr
+    
+    # Log the gnatprove output
+    logger.info(f"\n-----------------------------------\nGnatprove output for {gpr_filepath}:\nSTDOUT:\n{process.stdout}\nSTDERR:\n{process.stderr}\n-----------------------------------\n")
 
-    # Return the standard output
-    return process.stdout
+    # Return the combined output
+    return combined_output
 
 
 def parse_gnatprove_output(gnatprove_output: str) -> List[Tuple[str, str]]:
@@ -359,7 +381,8 @@ def extract_line_of_code_from_file(medium: str, project_dir: str) -> str:
 
 def is_compilation_successful(output: str) -> bool:
     """
-    Check if the compilation was successful by checking if the line "Phase 2 of 2: flow analysis and proof ..." is in the output.
+    Check if the compilation was successful by checking if the line "flow analysis and proof ..." is in the output.
+    This works for both "Phase 2 of 2" (older gnatprove) and "Phase 3 of 3" (newer gnatprove).
     
     Args:
         output (str): The output from running gnatprove
@@ -368,7 +391,8 @@ def is_compilation_successful(output: str) -> bool:
         bool: True if the compilation was successful, False otherwise
     """
 
-    search_line = "Phase 2 of 2: flow analysis and proof ..."
+    # Search for flow analysis phase - works for both Phase 2 of 2 and Phase 3 of 3
+    search_line = "flow analysis and proof"
 
     # Check if the line is in the output
     if search_line in output:

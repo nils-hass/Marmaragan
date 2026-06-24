@@ -1,0 +1,483 @@
+-- start file gimli.adb
+
+package body Gimli
+with SPARK_Mode => On
+is
+
+   Round_Constant : constant Unsigned_32 := 16#9e37_7900#;
+
+   ------------
+   --  Swap  --
+   ------------
+
+   procedure Swap (A, B : in out Unsigned_32)
+   is
+      Temp : Unsigned_32;
+   begin
+      Temp := A;
+      A := B;
+      B := Temp;
+   end Swap;
+
+   --------------
+   --  SP_Box  --
+   --------------
+
+   procedure SP_Box (S : in out State)
+   is
+      X : Unsigned_32;
+      Y : Unsigned_32;
+      Z : Unsigned_32;
+
+   begin
+      for Column in Column_Number loop
+         X := Rotate_Left (S (Column, 0), 24);
+         Y := Rotate_Left (S (Column, 1),  9);
+         Z :=              S (Column, 2);
+
+         S (Column, 2) := X xor Shift_Left (Z, 1) xor Shift_Left (Y and Z, 2);
+         S (Column, 1) := Y xor X                 xor Shift_Left (X  or Z, 1);
+         S (Column, 0) := Z xor Y                 xor Shift_Left (X and Y, 3);
+      end loop;
+   end SP_Box;
+
+   ------------
+   --  Init  --
+   ------------
+
+   procedure Init (S : out State)
+   is
+   begin
+      S := (others => (others => 0));
+   end Init;
+
+   ---------------
+   --  Permute  --
+   ---------------
+
+   procedure Permute (S : in out State)
+   is
+   begin
+      for Round in reverse Round_Number loop
+         SP_Box (S);
+
+         --  Small swap: pattern s...s...s... etc.
+         if Round mod 4 = 0 then
+            Swap (S (0, 0), S (1, 0));
+            Swap (S (2, 0), S (3, 0));
+         end if;
+
+         --  Big swap: pattern ..S...S...S etc.
+         if Round mod 4 = 2 then
+            Swap (S (0, 0), S (2, 0));
+            Swap (S (1, 0), S (3, 0));
+         end if;
+
+         if Round mod 4 = 0 then
+            S (0, 0) := S (0, 0) xor (Round_Constant or Unsigned_32 (Round));
+         end if;
+      end loop;
+   end Permute;
+
+   ---------------------------
+   --  XOR_Bits_Into_State  --
+   ---------------------------
+
+   procedure XOR_Bits_Into_State (S       : in out State;
+                                  Data    : in     Keccak.Types.Byte_Array;
+                                  Bit_Len : in     Natural)
+   is
+      Remaining_Bits   : Natural := Bit_Len;
+      Offset           : Natural := 0;
+
+   begin
+      --  Process whole words (32 bits).
+      Outer_Loop :
+      for Row in Row_Number loop
+         pragma Loop_Invariant ((Offset * 8) + Remaining_Bits = Bit_Len);
+         pragma Loop_Invariant (Offset mod 4 = 0);
+         pragma Loop_Invariant (Offset = Natural (Row) * 16);
+
+         for Column in Column_Number loop
+            pragma Loop_Invariant ((Offset * 8) + Remaining_Bits = Bit_Len);
+            pragma Loop_Invariant (Offset mod 4 = 0);
+
+            exit Outer_Loop when Remaining_Bits < 32;
+
+            declare
+               Word : Unsigned_32;
+            begin
+               Word := Unsigned_32 (Data (Data'First + Offset));
+               Word := Word or Shift_Left (Unsigned_32 (Data (Data'First + Offset + 1)), 8);
+               Word := Word or Shift_Left (Unsigned_32 (Data (Data'First + Offset + 2)), 16);
+               Word := Word or Shift_Left (Unsigned_32 (Data (Data'First + Offset + 3)), 24);
+
+               S (Column, Row) := S (Column, Row) xor Word;
+            end;
+
+            Offset          := Offset          + 4;
+            Remaining_Bits  := Remaining_Bits  - 32;
+
+         end loop;
+      end loop Outer_Loop;
+
+      --  Process any remaining data
+      if Remaining_Bits > 0 then
+         declare
+            Column : constant Column_Number := Column_Number ((Bit_Len / 32) mod 4);
+            Row    : constant Row_Number    := Row_Number    (Bit_Len / 128);
+
+            Word            : Unsigned_32 := 0;
+            Remaining_Bytes : constant Natural := (Remaining_Bits + 7) / 8;
+
+         begin
+            for I in Natural range 0 .. Remaining_Bytes - 1 loop
+               Word := Word or Shift_Left (Unsigned_32 (Data (Data'First + Offset + I)), I * 8);
+            end loop;
+
+            S (Column, Row) := S (Column, Row) xor (Word and (2**Remaining_Bits) - 1);
+         end;
+      end if;
+   end XOR_Bits_Into_State;
+
+   --------------------
+   --  Extract_Bits  --
+   --------------------
+
+   procedure Extract_Bytes (S    : in     State;
+                            Data :    out Keccak.Types.Byte_Array)
+   is
+      Remaining : Natural := Data'Length;
+      Offset    : Natural := 0;
+
+      Pos       : Keccak.Types.Index_Number;
+
+   begin
+      --  Process whole words (32 bits).
+      Outer_Loop :
+      for Row in Row_Number loop
+         pragma Loop_Invariant (Offset + Remaining = Data'Length);
+         pragma Loop_Invariant (Offset mod 4 = 0);
+         pragma Loop_Invariant (Offset = Natural (Row) * 16);
+
+         for Column in Column_Number loop
+            pragma Loop_Invariant (Offset + Remaining = Data'Length);
+            pragma Loop_Invariant (Offset mod 4 = 0);
+            pragma Loop_Invariant (Offset = (Natural (Row) * 16) +
+                                            (Natural (Column) * 4));
+
+            exit Outer_Loop when Remaining < 4;
+
+            declare
+               Word : constant Unsigned_32 := S (Column, Row);
+            begin
+               Pos := Data'First + Offset;
+
+               Data (Pos)     := Unsigned_8 (Word and 16#FF#);
+               Data (Pos + 1) := Unsigned_8 (Shift_Right (Word, 8) and 16#FF#);
+               Data (Pos + 2) := Unsigned_8 (Shift_Right (Word, 16) and 16#FF#);
+               Data (Pos + 3) := Unsigned_8 (Shift_Right (Word, 24) and 16#FF#);
+            end;
+
+            Offset    := Offset    + 4;
+            Remaining := Remaining - 4;
+
+         end loop;
+      end loop Outer_Loop;
+
+      pragma Assert (Remaining < 4);
+
+      --  Process any remaining data
+      if Remaining > 0 then
+         declare
+            Column : constant Column_Number := Column_Number ((Offset / 4) mod 4);
+            Row    : constant Row_Number    := Row_Number    (Offset / 16);
+
+            Word   : constant Unsigned_32 := S (Column, Row);
+
+         begin
+            for I in Natural range 0 .. Remaining - 1 loop
+               pragma Loop_Invariant (Offset + (Remaining - I) = Data'Length);
+
+               Data (Data'First + Offset) := Unsigned_8 (Shift_Right (Word, I * 8) and 16#FF#);
+
+               Offset := Offset + 1;
+            end loop;
+         end;
+      end if;
+   end Extract_Bytes;
+
+   --------------------
+   --  Extract_Bits  --
+   --------------------
+
+   procedure Extract_Bits (A       : in     State;
+                           Data    :    out Keccak.Types.Byte_Array;
+                           Bit_Len : in     Natural)
+   is
+   begin
+      Extract_Bytes (A, Data);
+
+      --  Avoid exposing more bits than requested by masking away higher bits
+      --  in the last byte.
+      if Bit_Len > 0 and Bit_Len mod 8 /= 0 then
+         Data (Data'Last) := Data (Data'Last) and (2**(Bit_Len mod 8) - 1);
+      end if;
+   end Extract_Bits;
+
+end Gimli;
+
+-- end file gimli.adb
+
+
+-- start file gimli.ads
+
+with Interfaces;   use Interfaces;
+with Keccak.Types;
+
+--  @summary
+--  Implementation of the Gimli permutation.
+package Gimli
+with SPARK_Mode => On
+is
+
+   State_Size_Bits : constant := 384;
+   --  The Gimli state size, in bits.
+
+   type State is private;
+   --  The Gimli state.
+
+   procedure Init (S : out State)
+     with Global => null,
+     Depends => (S => null);
+   --  Initialise the Gimli state to all zeroes.
+
+   procedure Permute (S : in out State)
+     with Global => null,
+     Depends => (S =>+ null);
+   --  Apply the Gimli permutation function.
+
+   procedure XOR_Bits_Into_State (S       : in out State;
+                                  Data    : in     Keccak.Types.Byte_Array;
+                                  Bit_Len : in     Natural)
+     with Global => null,
+     Depends => (S =>+ (Data, Bit_Len)),
+     Pre => (Bit_Len <= State_Size_Bits
+             and then (Bit_Len + 7) / 8 <= Data'Length);
+   --  XOR an arbitrary number of bits into the Gimli state.
+   --
+   --  The data size (in bits) cannot exceed the Gimli size (384 bits).
+
+   procedure Extract_Bytes (S    : in     State;
+                            Data :    out Keccak.Types.Byte_Array)
+     with Global => null,
+     Depends => (Data =>+ S),
+     Pre => Data'Length <= (State_Size_Bits / 8);
+   pragma Annotate
+     (GNATprove, False_Positive,
+      """Data"" might not be initialized",
+      "GNATprove issues a false positive due to the use of loops to initialize Data");
+   --  Copy bytes from the Gimli state.
+   --
+   --  The number of bytes to copy cannot exceed the Gimli state size (48 bytes)
+
+   procedure Extract_Bits (A       : in     State;
+                           Data    :    out Keccak.Types.Byte_Array;
+                           Bit_Len : in     Natural)
+     with Global => null,
+     Depends => (Data =>+ (A, Bit_Len)),
+     Pre => (Bit_Len <= State_Size_Bits
+             and then Data'Length = (Bit_Len + 7) / 8);
+   --  Copy bits from the Gimli state.
+   --
+   --  The number of bits to copy cannot exceed the Gimli state size (384 bits)
+
+private
+
+   type Row_Number    is range 0 .. 2;
+   type Column_Number is range 0 .. 3;
+
+   type Round_Number is range 1 .. 24;
+
+   type State is array (Column_Number, Row_Number) of Unsigned_32
+     with Size => 384;
+
+   procedure SP_Box (S : in out State)
+     with Inline,
+     Global => null,
+     Depends => (S =>+ null);
+   --  SP-box operation.
+
+   procedure Swap (A, B : in out Unsigned_32)
+     with Inline,
+     Global => null,
+     Depends => (A => B,
+                 B => A),
+     Post => (A = B'Old and B = A'Old);
+   --  Swap two words.
+
+end Gimli;
+
+-- end file gimli.ads
+
+
+-- start file keccak-types.ads
+
+-------------------------------------------------------------------------------
+--  This package defines common types used throughout the various packages
+--  in the library.
+-------------------------------------------------------------------------------
+
+with Interfaces;
+
+--  @summary
+--  Common type definitions.
+package Keccak.Types
+with SPARK_Mode => On
+is
+
+   type Unsigned_1 is mod 2**1 with Size => 1;
+   type Unsigned_2 is mod 2**2 with Size => 2;
+   type Unsigned_4 is mod 2**4 with Size => 4;
+
+   subtype Byte is Interfaces.Unsigned_8
+     with Object_Size => 8;
+
+   subtype Index_Number is Natural range 0 .. Natural'Last - 1;
+   type Byte_Array is array (Index_Number range <>) of Byte
+     with Component_Size => 8;
+
+   Null_Byte_Array : constant Byte_Array (1 .. 0) := (others => 0);
+
+   ------------------
+   --  Shift_Left  --
+   ------------------
+
+   function Shift_Left_1 (Value  : in Unsigned_1;
+                          Amount : in Natural) return Unsigned_1
+     with Global => null,
+     Inline,
+     Pre => Amount <= 1;
+
+   function Shift_Left_2 (Value  : in Unsigned_2;
+                          Amount : in Natural) return Unsigned_2
+     with Global => null,
+     Inline,
+     Pre => Amount <= 2;
+
+   function Shift_Left_4 (Value  : in Unsigned_4;
+                          Amount : in Natural) return Unsigned_4
+     with Global => null,
+     Inline,
+     Pre => Amount <= 4;
+
+   -------------------
+   --  Shift_Right  --
+   -------------------
+
+   function Shift_Right_1 (Value  : in Unsigned_1;
+                           Amount : in Natural) return Unsigned_1
+     with Global => null,
+     Inline,
+     Pre => Amount <= 1;
+
+   function Shift_Right_2 (Value  : in Unsigned_2;
+                           Amount : in Natural) return Unsigned_2
+     with Global => null,
+     Inline,
+     Pre => Amount <= 2;
+
+   function Shift_Right_4 (Value  : in Unsigned_4;
+                           Amount : in Natural) return Unsigned_4
+     with Global => null,
+     Inline,
+     Pre => Amount <= 4;
+
+   -------------------
+   --  Rotate_Left  --
+   -------------------
+
+   function Rotate_Left_1 (Value  : in Unsigned_1;
+                           Amount : in Natural) return Unsigned_1
+     with Global => null,
+     Inline,
+     Pre => Amount <= 1;
+
+   function Rotate_Left_2 (Value  : in Unsigned_2;
+                           Amount : in Natural) return Unsigned_2
+     with Global => null,
+     Inline,
+     Pre => Amount <= 2;
+
+   function Rotate_Left_4 (Value  : in Unsigned_4;
+                           Amount : in Natural) return Unsigned_4
+     with Global => null,
+     Inline,
+     Pre => Amount <= 4;
+
+private
+   use type Interfaces.Unsigned_8;
+
+   ------------------
+   --  Shift_Left  --
+   ------------------
+
+   function Shift_Left_1 (Value  : in Unsigned_1;
+                          Amount : in Natural) return Unsigned_1
+   is (Unsigned_1 (Interfaces.Shift_Left (Byte (Value), Amount) and (2**1 - 1)));
+
+   function Shift_Left_2 (Value  : in Unsigned_2;
+                          Amount : in Natural) return Unsigned_2
+   is (Unsigned_2 (Interfaces.Shift_Left (Byte (Value), Amount) and (2**2 - 1)));
+
+   function Shift_Left_4 (Value  : in Unsigned_4;
+                          Amount : in Natural) return Unsigned_4
+   is (Unsigned_4 (Interfaces.Shift_Left (Byte (Value), Amount) and (2**4 - 1)));
+
+   -------------------
+   --  Shift_Right  --
+   -------------------
+
+   function Shift_Right_1 (Value  : in Unsigned_1;
+                           Amount : in Natural) return Unsigned_1
+   is (Unsigned_1 (Interfaces.Shift_Right (Byte (Value), Amount) and (2**1 - 1)));
+
+   function Shift_Right_2 (Value  : in Unsigned_2;
+                           Amount : in Natural) return Unsigned_2
+   is (Unsigned_2 (Interfaces.Shift_Right (Byte (Value), Amount) and (2**2 - 1)));
+
+   function Shift_Right_4 (Value  : in Unsigned_4;
+                           Amount : in Natural) return Unsigned_4
+   is (Unsigned_4 (Interfaces.Shift_Right (Byte (Value), Amount) and (2**4 - 1)));
+
+   -------------------
+   --  Rotate_Left  --
+   -------------------
+
+   function Rotate_Left_1 (Value  : in Unsigned_1;
+                           Amount : in Natural) return Unsigned_1
+   is (Value);
+
+   function Rotate_Left_2 (Value  : in Unsigned_2;
+                           Amount : in Natural) return Unsigned_2
+   is (Shift_Left_2 (Value, Amount) or Shift_Right_2 (Value, 2 - Amount));
+
+   function Rotate_Left_4 (Value  : in Unsigned_4;
+                           Amount : in Natural) return Unsigned_4
+   is (Shift_Left_4 (Value, Amount) or Shift_Right_4 (Value, 4 - Amount));
+
+end Keccak.Types;
+
+-- end file keccak-types.ads
+
+
+-- start file keccak.ads
+
+--  @summary
+--  Parent package for the Keccak-related components.
+package Keccak
+with SPARK_Mode => On
+is
+end Keccak;
+
+-- end file keccak.ads

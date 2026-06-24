@@ -1,5 +1,11 @@
 import shutil
+import sys
+import os
 from time import sleep
+
+# Add parent directory to path so we can import from src/
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from src.util import *
 
 
@@ -46,3 +52,19 @@ def dry_run_benchmark(benchmark_dir: str) -> None:
     
     # Remove the tmp_benchmark directory
     shutil.rmtree(tmp_benchmark)
+
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Dry run benchmark to test compilation and check for mediums"
+    )
+    parser.add_argument('benchmark_dir', 
+                       help='Directory containing benchmark .txt files')
+    
+    args = parser.parse_args()
+    
+    print(f"Running dry run on benchmark: {args.benchmark_dir}")
+    dry_run_benchmark(args.benchmark_dir)
+    print(f"Results written to: {args.benchmark_dir.split('/')[-1]}_results.txt")

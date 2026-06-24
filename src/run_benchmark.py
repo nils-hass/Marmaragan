@@ -4,6 +4,7 @@ import shutil
 import logging
 import time
 from langchain_openai import ChatOpenAI
+from langchain_community.chat_models import ChatOllama
 from langchain.schema import HumanMessage, BaseMessage
 from langchain_core.outputs import ChatResult
 from typing import List, Tuple
@@ -23,7 +24,7 @@ class run_benchmark:
             benchmark_program_indices (List[int]): A list of the indices of the programs in the benchmark to run. Default is all programs in the benchmark
     """    
     
-    def __init__(self, system_message: str, prompt: str, benchmark_dir: str, gpt_model: str, n_solutions: int, retries: int, with_medium_in_prompt: bool, benchmark_program_indices: List[int] = list(range(1, 17))):
+    def __init__(self, system_message: str, prompt: str, benchmark_dir: str, gpt_model: str, n_solutions: int, retries: int, with_medium_in_prompt: bool, benchmark_program_indices: List[int] = list(range(1, 17)), llm_backend: str = "api"):
         
         # Set the system message and gpt model
         self.system_message = system_message
@@ -33,6 +34,7 @@ class run_benchmark:
         self.n_solutions = n_solutions
         self.retries = retries
         self.with_medium_in_prompt = with_medium_in_prompt
+        self.llm_backend = llm_backend
         
         
         # Retrieve the benchmark files
@@ -210,6 +212,7 @@ class run_benchmark:
 --------------------------
 Starting new Benchmark Run
 --------------------------
+LLM Backend: {self.llm_backend} \n
 Model: {self.gpt_model} \n
 Benchmark: {self.benchmark_dir} \n
 Programs: \n{self.nl.join(map(str, benchmark_programs))} \n
@@ -281,8 +284,32 @@ Prompt: \n{self.prompt}\n
         
         summary_string = "\n".join(summary_array)
         
-        # Compile the totals of the results_array
+        # Compile per-file statistics
+        file_results = {}  # Maps file identifier to list of success/failure results
         
+        for project, compilation_successful, no_mediums in results_array:
+            # Extract file identifier (everything before " - attempt:")
+            file_id = project.split(" - attempt:")[0] if " - attempt:" in project else project
+            
+            if file_id not in file_results:
+                file_results[file_id] = []
+            
+            file_results[file_id].append(no_mediums)
+        
+        # Determine which files were successfully verified (at least one success)
+        per_file_summary = []
+        files_verified = 0
+        total_files = len(file_results)
+        
+        for file_id in sorted(file_results.keys()):
+            has_success = any(file_results[file_id])
+            if has_success:
+                per_file_summary.append(f"SUCCESS: {file_id}")
+                files_verified += 1
+            else:
+                per_file_summary.append(f"FAILURE: {file_id}")
+        
+        per_file_summary_string = "\n".join(per_file_summary)
         
         # End timing and log
         self.end_time = time.time()  # End timing
@@ -295,8 +322,14 @@ End of Benchmark Run
 --------------------------
 {summary_string}
 Time taken: {duration} \n
-Summary of results:
+Summary of results (all attempts):
 {successes} / {total}
+--------------------------
+
+Per-File Results:
+{per_file_summary_string}
+
+Files successfully verified (at least one success): {files_verified} / {total_files}
 --------------------------
 \n\n\n
                          """)
@@ -317,29 +350,51 @@ Summary of results:
             List[str]: A list of strings containing each of the responses
         """
         
+        # Log the prompt
+        self.logger.info(f"\n-----------------------------------\nPrompt sent to LLM (backend={self.llm_backend}, model={model_name}, n={n_solutions}):\n{prompt}\n-----------------------------------\n")
+        
         # List of solutions
         solutions = []
         
-        # Initialise the chat model
-        chat_model = ChatOpenAI(
-            model_name=model_name,
-            temperature=1.0,
-            n=n_solutions
-        )
-        
         # Create a human message
         message = HumanMessage(content=prompt)
-        
-        # Generate responses
-        response = chat_model._generate([message]) 
-        
-        # Check if the response is a ChatResult object
-        assert isinstance(response, ChatResult)
-        assert len(response.generations) == n_solutions  # Check if correct number responses are generated
-        for generation in response.generations:
-            assert isinstance(generation.message, BaseMessage)
-            assert isinstance(generation.message.content, str)
-            solutions.append(generation.message.content)
+
+        if self.llm_backend == "api":
+            chat_model = ChatOpenAI(
+                model_name=model_name,
+                temperature=1.0,
+                n=n_solutions
+            )
+
+            # Generate responses
+            response = chat_model._generate([message])
+
+            # Check if the response is a ChatResult object
+            assert isinstance(response, ChatResult)
+            assert len(response.generations) == n_solutions  # Check if correct number responses are generated
+            for generation in response.generations:
+                assert isinstance(generation.message, BaseMessage)
+                assert isinstance(generation.message.content, str)
+                solutions.append(generation.message.content)
+
+        elif self.llm_backend == "local":
+            chat_model = ChatOllama(
+                model=model_name,
+                temperature=1.0
+            )
+
+            # ChatOllama may return one generation per call; loop for n solutions.
+            for _ in range(n_solutions):
+                response = chat_model._generate([message])
+                assert isinstance(response, ChatResult)
+                assert len(response.generations) >= 1
+                generation = response.generations[0]
+                assert isinstance(generation.message, BaseMessage)
+                assert isinstance(generation.message.content, str)
+                solutions.append(generation.message.content)
+
+        else:
+            raise ValueError(f"Unsupported llm_backend: {self.llm_backend}. Expected 'api' or 'local'.")
 
         
         

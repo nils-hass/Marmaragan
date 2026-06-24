@@ -1,0 +1,337 @@
+-- start file lsc-internal-ops32.adb
+
+package body LSC.Internal.Ops32
+   with SPARK_Mode
+is
+
+   function Bytes_To_Word
+      (Byte0 : Types.Byte;
+       Byte1 : Types.Byte;
+       Byte2 : Types.Byte;
+       Byte3 : Types.Byte) return Types.Word32
+   is
+   begin
+      return Types.Byte_Array32_To_Word32 (Types.Byte_Array32_Type'(Byte3, Byte2, Byte1, Byte0));
+   end Bytes_To_Word;
+
+   ----------------------------------------------------------------------------
+
+   function ByteX (Value    : Types.Word32;
+                   Position : Types.Byte_Array32_Index) return Types.Byte
+   is
+      Temp : Types.Byte_Array32_Type;
+   begin
+      Temp := Types.Word32_To_Byte_Array32 (Value);
+      return Temp (Position);
+   end ByteX;
+
+   ----------------------------------------------------------------------------
+
+   function Byte0 (Value : Types.Word32) return Types.Byte
+   is
+   begin
+      return ByteX (Value, 3);
+   end Byte0;
+
+   ----------------------------------------------------------------------------
+
+   function Byte1 (Value : Types.Word32) return Types.Byte
+   is
+   begin
+      return ByteX (Value, 2);
+   end Byte1;
+
+   ----------------------------------------------------------------------------
+
+   function Byte2 (Value : Types.Word32) return Types.Byte
+   is
+   begin
+      return ByteX (Value, 1);
+   end Byte2;
+
+   ----------------------------------------------------------------------------
+
+   function Byte3 (Value : Types.Word32) return Types.Byte
+   is
+   begin
+      return ByteX (Value, 0);
+   end Byte3;
+
+   ----------------------------------------------------------------------------
+
+   function XOR2 (V0, V1 : Types.Word32) return Types.Word32
+   is
+   begin
+      return V0 xor V1;
+   end XOR2;
+
+   ----------------------------------------------------------------------------
+
+   function XOR3 (V0, V1, V2 : Types.Word32) return Types.Word32
+   is
+   begin
+      return V0 xor V1 xor V2;
+   end XOR3;
+
+   ----------------------------------------------------------------------------
+
+   function XOR4 (V0, V1, V2, V3 : Types.Word32) return Types.Word32
+   is
+   begin
+      return V0 xor V1 xor V2 xor V3;
+   end XOR4;
+
+   ----------------------------------------------------------------------------
+
+   function XOR5 (V0, V1, V2, V3, V4 : Types.Word32) return Types.Word32
+   is
+   begin
+      return V0 xor V1 xor V2 xor V3 xor V4;
+   end XOR5;
+
+   ----------------------------------------------------------------------------
+
+   procedure Block_XOR
+     (Left   : in     Types.Word32_Array_Type;
+      Right  : in     Types.Word32_Array_Type;
+      Result :    out Types.Word32_Array_Type)
+   is
+   begin
+      for I in Types.Index range Result'First .. Result'Last
+      loop
+         Result (I) := XOR2 (Left (I), Right (I));
+         pragma Loop_Invariant
+           (for all Pos in Types.Index range Result'First .. I =>
+              (Result (Pos) = XOR2 (Left (Pos), Right (Pos))));
+      end loop;
+   end Block_XOR;
+   pragma Annotate
+     (GNATprove, False_Positive,
+      """Result"" might not be initialized",
+      "Initialized in complete loop");
+
+   ----------------------------------------------------------------------------
+
+   procedure Block_Copy
+     (Source : in     Types.Word32_Array_Type;
+      Dest   : in out Types.Word32_Array_Type)
+   is
+   begin
+
+      for I in Types.Index range Source'First .. Source'Last
+      loop
+         Dest (I) := Source (I);
+
+         pragma Loop_Invariant
+           (for all P in Types.Index range Source'First .. I =>
+              (Dest (P) = Source (P)));
+      end loop;
+
+   end Block_Copy;
+
+end LSC.Internal.Ops32;
+
+-- end file lsc-internal-ops32.adb
+
+
+-- start file lsc-internal-ops32.ads
+
+with LSC.Internal.Types;
+use type LSC.Internal.Types.Word32;
+use type LSC.Internal.Types.Index;
+
+-------------------------------------------------------------------------------
+--  Operations over 32-bit words
+-------------------------------------------------------------------------------
+package LSC.Internal.Ops32
+   with SPARK_Mode
+is
+
+   pragma Pure;
+
+   --  Convert the four byte values @Byte0@, @Byte1@, @Byte2@ and @Byte3@ to a
+   --  32-bit word
+   function Bytes_To_Word
+      (Byte0 : Types.Byte;
+       Byte1 : Types.Byte;
+       Byte2 : Types.Byte;
+       Byte3 : Types.Byte) return Types.Word32;
+   pragma Inline (Bytes_To_Word);
+
+   --  Return a byte at @Position@ of the 32-bit word @Value@
+   function ByteX (Value    : Types.Word32;
+                   Position : Types.Byte_Array32_Index) return Types.Byte;
+   pragma Inline (ByteX);
+
+   --  Return the first byte of the 32-bit word @Value@
+   function Byte0 (Value : Types.Word32) return Types.Byte;
+   pragma Inline (Byte0);
+
+   --  Return the second byte of the 32-bit word @Value@
+   function Byte1 (Value : Types.Word32) return Types.Byte;
+   pragma Inline (Byte1);
+
+   --  Return the third byte of the 32-bit word @Value@
+   function Byte2 (Value : Types.Word32) return Types.Byte;
+   pragma Inline (Byte2);
+
+   --  Return the fourth byte of the 32-bit word @Value@
+   function Byte3 (Value : Types.Word32) return Types.Byte;
+   pragma Inline (Byte3);
+
+   --  Perform XOR on two 32-bit words @V0@ and @V1@
+   function XOR2 (V0, V1 : Types.Word32) return Types.Word32
+     with Post => XOR2'Result = (V0 xor V1);
+   pragma Inline (XOR2);
+
+   --  Perform XOR on three 32-bit words @V0@, @V1@ and @V2@
+   function XOR3 (V0, V1, V2 : Types.Word32) return Types.Word32
+     with Post => XOR3'Result = (V0 xor V1 xor V2);
+   pragma Inline (XOR3);
+
+   --  Perform XOR on four 32-bit words @V0@, @V1@, @V2@ and @V3@
+   function XOR4 (V0, V1, V2, V3 : Types.Word32) return Types.Word32
+     with Post => XOR4'Result = (V0 xor V1 xor V2 xor V3);
+   pragma Inline (XOR4);
+
+   --  Perform XOR on four 32-bit words @V0@, @V1@, @V2@, @V3@ and @V4@
+   function XOR5 (V0, V1, V2, V3, V4 : Types.Word32) return Types.Word32
+     with Post => XOR5'Result = (V0 xor V1 xor V2 xor V3 xor V4);
+   pragma Inline (XOR5);
+
+   --  Perform XOR on two arrays of 32-bit words
+   --
+   --  @Left@   - First input array <br>
+   --  @Right@  - Second input array <br>
+   --  @Result@ - Result array <br>
+   procedure Block_XOR
+     (Left   : in     Types.Word32_Array_Type;
+      Right  : in     Types.Word32_Array_Type;
+      Result :    out Types.Word32_Array_Type)
+     with
+       Depends =>
+         (Result =>+ (Left, Right)),
+       Pre =>
+         Left'First  = Right'First and
+         Left'Last   = Right'Last  and
+         Right'First = Result'First and
+         Right'Last  = Result'Last,
+       Post =>
+         (for all I in Types.Index range Left'First .. Left'Last =>
+            (Result (I) = XOR2 (Left (I), Right (I))));
+   pragma Inline (Block_XOR);
+
+   --  Copy all elements of @Source@ to @Dest@. Should @Source@ be shorter than
+   --  @Dest@, remaining elements stay unchanged.
+   procedure Block_Copy
+      (Source : in     Types.Word32_Array_Type;
+       Dest   : in out Types.Word32_Array_Type)
+     with
+       Depends =>
+         (Dest =>+ Source),
+       Pre =>
+         Source'First  = Dest'First and
+         Source'Last  <= Dest'Last,
+       Post =>
+         (for all P in Types.Index range Source'First .. Source'Last =>
+            (Dest (P) = Source (P)));
+   pragma Inline (Block_Copy);
+
+end LSC.Internal.Ops32;
+
+-- end file lsc-internal-ops32.ads
+
+
+-- start file lsc-internal-types.ads
+
+with Interfaces;
+
+use type Interfaces.Unsigned_32;
+use type Interfaces.Unsigned_64;
+
+-------------------------------------------------------------------------------
+--  Primitive types and operations
+-------------------------------------------------------------------------------
+package LSC.Internal.Types
+   with
+      SPARK_Mode => On
+is
+   pragma Pure;
+
+   --  Base index type
+   type Index is range 0 .. 79;
+
+   --  8-bit word
+   subtype Byte is Interfaces.Unsigned_8;
+
+   --  32-bit word
+   subtype Word32 is Interfaces.Unsigned_32;
+
+   --  64-bit word
+   subtype Word64 is Interfaces.Unsigned_64;
+
+   --  Index for 32-bit byte array
+   subtype Byte_Array32_Index is Index range 0 .. 3;
+
+   --  32-bit byte array
+   type Byte_Array32_Type is array (Byte_Array32_Index) of Byte;
+
+   --  Index for 64-bit byte array
+   subtype Byte_Array64_Index is Index range 0 .. 7;
+
+   --  64-bit byte array
+   type Byte_Array64_Type is array (Byte_Array64_Index) of Byte;
+
+   --  Unconstrained array of 32-bit words
+   type Word32_Array_Type is array (Index range <>) of Word32;
+
+   --  Unconstrained array of 64-bit words
+   type Word64_Array_Type is array (Index range <>) of Word64;
+
+   --  Convert 32-bit word to 32-bit byte array
+   function Word32_To_Byte_Array32 (Value : Word32) return Byte_Array32_Type;
+   pragma Inline (Word32_To_Byte_Array32);
+
+   --  Convert 32-bit byte array to 32-bit word
+   function Byte_Array32_To_Word32 (Value : Byte_Array32_Type) return Word32;
+   pragma Inline (Byte_Array32_To_Word32);
+
+   --  Convert 64-bit word to 64-bit byte array
+   function Word64_To_Byte_Array64 (Value : Word64) return Byte_Array64_Type;
+   pragma Inline (Word64_To_Byte_Array64);
+
+   --  Convert 64-bit byte array to 64-bit word
+   function Byte_Array64_To_Word64 (Value : Byte_Array64_Type) return Word64;
+   pragma Inline (Byte_Array64_To_Word64);
+
+end LSC.Internal.Types;
+
+-- end file lsc-internal-types.ads
+
+
+-- start file lsc-internal.ads
+
+-------------------------------------------------------------------------------
+--  Base package of libsparkcrypto internal API
+-------------------------------------------------------------------------------
+package LSC.Internal is
+
+   pragma Pure;
+
+end LSC.Internal;
+
+-- end file lsc-internal.ads
+
+
+-- start file lsc.ads
+
+-------------------------------------------------------------------------------
+--  Base package of libsparkcrypto
+-------------------------------------------------------------------------------
+package LSC is
+
+   pragma Pure;
+
+end LSC;
+
+-- end file lsc.ads
