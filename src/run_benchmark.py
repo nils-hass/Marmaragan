@@ -3,10 +3,19 @@ from src.util import *
 import shutil
 import logging
 import time
+import requests
 from langchain_openai import ChatOpenAI
-from langchain_community.chat_models import ChatOllama
-from langchain.schema import HumanMessage, BaseMessage
-from langchain_core.outputs import ChatResult
+
+# LangChain moved core message/output types between packages across versions.
+try:
+    from langchain.schema import HumanMessage, BaseMessage
+except ImportError:
+    from langchain_core.messages import HumanMessage, BaseMessage
+
+try:
+    from langchain_core.outputs import ChatResult
+except ImportError:
+    from langchain.schema import ChatResult
 from typing import List, Tuple
 
 
@@ -378,20 +387,61 @@ Files successfully verified (at least one success): {files_verified} / {total_fi
                 solutions.append(generation.message.content)
 
         elif self.llm_backend == "local":
-            chat_model = ChatOllama(
-                model=model_name,
-                temperature=1.0
-            )
+            # Import locally so API-only runs do not fail at module import time.
+            chat_ollama_cls = None
+            try:
+                from langchain_community.chat_models import ChatOllama
+                chat_ollama_cls = ChatOllama
+            except ImportError:
+                try:
+                    from langchain_community.chat_models.ollama import ChatOllama
+                    chat_ollama_cls = ChatOllama
+                except ImportError:
+                    try:
+                        from langchain_ollama import ChatOllama
+                        chat_ollama_cls = ChatOllama
+                    except ImportError as exc:
+                        self.logger.warning(
+                            "Could not import ChatOllama integration (%s). Falling back to direct Ollama HTTP API.",
+                            str(exc),
+                        )
 
-            # ChatOllama may return one generation per call; loop for n solutions.
-            for _ in range(n_solutions):
-                response = chat_model._generate([message])
-                assert isinstance(response, ChatResult)
-                assert len(response.generations) >= 1
-                generation = response.generations[0]
-                assert isinstance(generation.message, BaseMessage)
-                assert isinstance(generation.message.content, str)
-                solutions.append(generation.message.content)
+            if chat_ollama_cls is not None:
+                chat_model = chat_ollama_cls(
+                    model=model_name,
+                    temperature=1.0
+                )
+
+                # ChatOllama may return one generation per call; loop for n solutions.
+                for _ in range(n_solutions):
+                    response = chat_model._generate([message])
+                    assert isinstance(response, ChatResult)
+                    assert len(response.generations) >= 1
+                    generation = response.generations[0]
+                    assert isinstance(generation.message, BaseMessage)
+                    assert isinstance(generation.message.content, str)
+                    solutions.append(generation.message.content)
+            else:
+                # Fallback path for offline environments without langchain ollama packages.
+                for _ in range(n_solutions):
+                    response = requests.post(
+                        "http://127.0.0.1:11434/api/generate",
+                        json={
+                            "model": model_name,
+                            "prompt": prompt,
+                            "stream": False,
+                            "options": {"temperature": 1.0},
+                        },
+                        timeout=600,
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    generated_text = payload.get("response")
+                    if not isinstance(generated_text, str):
+                        raise RuntimeError(
+                            f"Unexpected Ollama response format: {payload}"
+                        )
+                    solutions.append(generated_text)
 
         else:
             raise ValueError(f"Unsupported llm_backend: {self.llm_backend}. Expected 'api' or 'local'.")
