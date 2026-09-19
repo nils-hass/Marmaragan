@@ -3,6 +3,7 @@ from src.util import *
 import shutil
 import logging
 import time
+import traceback
 import requests
 import os
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
@@ -94,6 +95,35 @@ class run_benchmark:
         # Initialise the run and retrieve the benchmark files
         benchmark_files = self.init_run()
         
+        # Programs that ran to completion, so that a run ending early can still be summarised
+        self.programs_completed = 0
+        aborted_with = None
+        
+        try:
+            self.run_programs(benchmark_files)
+        
+        # An error reaching this point (an expired key, an exhausted quota, an interrupt) ends the
+        # run, but whatever was measured before it is still summarised before the error propagates.
+        except BaseException as exc:
+            aborted_with = exc
+            self.logger.error(
+                f"\n-----------------------------------\nBenchmark run aborted after {self.programs_completed} of {len(benchmark_files)} programs\n{traceback.format_exc()}-----------------------------------\n")
+            raise
+        
+        finally:
+            self.end_run(self.results, self.programs_completed, len(benchmark_files), aborted_with)
+
+
+    def run_programs(self, benchmark_files: List[Tuple[str, str]]) -> None:
+        """
+        Generate and prove the attempts for every program of the benchmark.
+        
+        Args:
+            benchmark_files (List[Tuple[str, str]]): Tuples of the gpr filepath and the benchmark txt filepath
+        
+        Returns:
+            None
+        """
         
     # Iterate over each project in the benchmark
         for benchmark_file_path in benchmark_files:
@@ -125,6 +155,7 @@ class run_benchmark:
                     self.logger.info(
                         f"Solution found for {project_name} - attempt: 0 - retry: 0 (initial gnatprove run already medium-free)\n\n"
                     )
+                    self.programs_completed += 1
                     continue
 
             print(benchmark_txt_path)
@@ -240,10 +271,8 @@ class run_benchmark:
 
                 llm_executor.shutdown(wait=True, cancel_futures=True)
                 gnatprove_executor.shutdown(wait=True, cancel_futures=True)
-                       
-        
-        # End the run and log summary
-        self.end_run(self.results)
+
+            self.programs_completed += 1
 
 
 
@@ -322,12 +351,15 @@ Prompt: \n{self.prompt}\n
         return benchmark_files
         
     
-    def end_run(self, results_array: List[Tuple[bool, bool]]) -> None:
+    def end_run(self, results_array: List[Tuple[bool, bool]], programs_completed: int = None, programs_total: int = None, aborted_with: BaseException = None) -> None:
         """
         This class ends the run by sumarrising results in the log
         
         Args:
             results_array (List[Tuple[bool, bool]]): A list of tuples containing the results of the form [(program-name, gnatprove-successful-compilation, medium-free)]
+            programs_completed (int): The number of programs that ran to completion
+            programs_total (int): The number of programs the run set out to process
+            aborted_with (BaseException): The error that ended the run early, if there was one
         
         Returns:
             None
@@ -377,6 +409,18 @@ Prompt: \n{self.prompt}\n
         
         per_file_summary_string = "\n".join(per_file_summary)
         
+        # A summary of a run that ended early must not read like a complete one
+        if aborted_with is not None:
+            run_header = (
+                f"Benchmark Run ABORTED after {programs_completed} of {programs_total} programs\n"
+                f"{type(aborted_with).__name__}: {aborted_with}\n"
+                f"The results below cover only the programs that finished."
+            )
+        elif programs_total is not None:
+            run_header = f"End of Benchmark Run ({programs_completed} of {programs_total} programs)"
+        else:
+            run_header = "End of Benchmark Run"
+
         # End timing and log
         self.end_time = time.time()  # End timing
         duration = self.end_time - self.start_time
@@ -384,7 +428,7 @@ Prompt: \n{self.prompt}\n
         self.logger.info(f"""
 \n\n\n
 --------------------------
-End of Benchmark Run
+{run_header}
 --------------------------
 {summary_string}
 Time taken: {duration} \n
