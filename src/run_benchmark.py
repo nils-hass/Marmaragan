@@ -4,6 +4,8 @@ import shutil
 import logging
 import time
 import requests
+import os
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from langchain_openai import ChatOpenAI
 
 # LangChain moved core message/output types between packages across versions.
@@ -95,94 +97,139 @@ class run_benchmark:
         
     # Iterate over each project in the benchmark
         for benchmark_file_path in benchmark_files:
-            
-            solution_found_flag = False
-            
             gpr_file_path = benchmark_file_path[0]
+            benchmark_txt_path = benchmark_file_path[1]
+            project_name = gpr_file_path.split('/')[-1]
             
             # Get dependencies and format as a string, get package_body
-            dependencies = self.nl.join(retrieve_dependencies(benchmark_file_path[1]))
-            package_body = retrieve_package_body(benchmark_file_path[1])
+            dependencies = self.nl.join(retrieve_dependencies(benchmark_txt_path))
+            package_body = retrieve_package_body(benchmark_txt_path)
+            original_package_body = package_body
             
             # Format the prompt
-            prompt = self.prompt.format(dependencies=dependencies, package_body=package_body)
-            
-            # If mediums are enabled, run gnatprove, extract the mediums and add them to the prompt
-            if self.with_medium_in_prompt:
-                
-                # Update the prompt, by appending the mediums from the gnatprove 
-                prompt = compile_and_extract_mediums(gpr_file_path, prompt)
+            prompt_base = self.prompt.format(dependencies=dependencies, package_body=package_body)
             
 
             # Dict which keeps track of gnatprove output of each generation. 
             # Key is the response number, value is a tuple containing the llm generated code and gnatprove output
             self.gnatprove_output_dict = {}
-                    
-            
-    # Invoke the LLM to generate the response
-            print(benchmark_file_path[1])   
-            llm_responses = self.invoke_llm(prompt, self.gpt_model, self.n_solutions) 
-            # Used to index the differnt solutions in the log
-            response_number_counter = 0
-            
-            
-    # For each response, extract the fixed code and write to file in the benchmark_dir
-            for llm_response in llm_responses:
-                
-                if solution_found_flag:
-                    break
-                
-                # Used to index the number of retries
-                retry_counter = 0
-                
-                response_number_counter += 1
-                
-                original_package_body = retrieve_package_body(benchmark_file_path[1])
-                
-                # Extract the fixed code, compile and log the results. This returns a tuple indicating if a solution was found and if any mediums can be included in the retry.
-                # If the code couldn't be extracted, or the filename couldn't be extracted, then solution_found_flag[1] is False
-                solution_found_flag, gnatprove_output_flag = self.extract_compile_and_log(
-                    llm_response, gpr_file_path, benchmark_file_path[1], response_number_counter, retry_counter, original_package_body)
-            
-        
-        # If retries are enabled, and no solution was found, retry with error message
-                for retry_counter in range(self.retries):
-                    
-                    if solution_found_flag:
-                        break      
-                    
-                    # Increment by 1 to display correct retry number
-                    retry_counter += 1
-                    
-                    # Reset the prompt
-                    prompt = ""
-                    
-                    if gnatprove_output_flag:
-                        
-                        llm_response, gnatprove_output = self.gnatprove_output_dict[response_number_counter]
-                        
-                        # Add the LLM generated, broken package body to the prompt
-                        prompt = self.prompt.format(
-                            dependencies=dependencies, package_body=llm_response)
 
-                        # Update the prompt, by appending the mediums from the gnatprove
-                        prompt = extract_mediums(gpr_file_path, gnatprove_output, prompt)
+            # Always run one initial proof pass. If no mediums remain, skip all LLM work.
+            initial_gnatprove_output = run_gnatprove(gpr_file_path)
+            if is_compilation_successful(initial_gnatprove_output):
+                initial_mediums = parse_gnatprove_output(initial_gnatprove_output)
+                if len(initial_mediums) == 0:
+                    self.results.append(
+                        (f"{project_name} {benchmark_txt_path} - attempt: 0 - retry: 0", True, True)
+                    )
+                    self.logger.info(
+                        f"Solution found for {project_name} - attempt: 0 - retry: 0 (initial gnatprove run already medium-free)\n\n"
+                    )
+                    continue
 
-                    else:
-                        # Run gnatprove and extract the mediums from the new file. Use these to format the prompt
-                        prompt = compile_and_append_stdout(gpr_file_path, prompt)
-                    
-                    
-                    # Invoke the LLM to generate the response
-                    llm_responses = self.invoke_llm(prompt, self.gpt_model, 1)      
+            print(benchmark_txt_path)
 
-                    # Although the LLM is set to generate 1 response, it returns a list of responses, therfore we iterate over this
-                    llm_response = llm_responses[0]
-                        
-                    original_package_body = retrieve_package_body(benchmark_file_path[1])
-                    
-                    solution_found_flag, gnatprove_output_flag = self.extract_compile_and_log(
-                        llm_response, gpr_file_path, benchmark_file_path[1], response_number_counter, retry_counter, original_package_body) 
+            # Create per-attempt isolated project directories to avoid file clobbering while pipelining.
+            attempt_states = []
+            for response_number_counter in range(1, self.n_solutions + 1):
+                source_project_dir = "/".join(gpr_file_path.split("/")[:-1])
+                source_project_name = gpr_file_path.split("/")[-1]
+                source_project_dir_name = source_project_dir.split("/")[-1]
+                attempt_dir = os.path.join(
+                    self.tmp_benchmark_dir,
+                    f"{source_project_dir_name}_attempt_{response_number_counter}",
+                )
+
+                if os.path.isdir(attempt_dir):
+                    shutil.rmtree(attempt_dir)
+                shutil.copytree(source_project_dir, attempt_dir)
+
+                attempt_gpr_path = os.path.join(attempt_dir, source_project_name)
+
+                if self.with_medium_in_prompt:
+                    initial_prompt = extract_mediums(attempt_gpr_path, initial_gnatprove_output, prompt_base)
+                else:
+                    initial_prompt = prompt_base
+
+                attempt_states.append({
+                    "response_number": response_number_counter,
+                    "retry_counter": 0,
+                    "gpr_file_path": attempt_gpr_path,
+                    "benchmark_file_name": benchmark_txt_path,
+                    "dependencies": dependencies,
+                    "next_prompt": initial_prompt,
+                    "active": True,
+                })
+
+            llm_executor = ThreadPoolExecutor(max_workers=1)
+            gnatprove_executor = ThreadPoolExecutor(max_workers=1)
+            future_to_task = {}
+            solution_found_flag = False
+
+            try:
+                # Seed one LLM call for each branch; workers serialize execution and pipeline with gnatprove.
+                for state in attempt_states:
+                    llm_future = llm_executor.submit(self.invoke_llm, state["next_prompt"], self.gpt_model, 1)
+                    future_to_task[llm_future] = ("llm", state)
+
+                while future_to_task and not solution_found_flag:
+                    done_futures, _ = wait(list(future_to_task.keys()), return_when=FIRST_COMPLETED)
+
+                    for completed_future in done_futures:
+                        task_type, state = future_to_task.pop(completed_future)
+
+                        if not state["active"]:
+                            continue
+
+                        if task_type == "llm":
+                            llm_responses = completed_future.result()
+                            llm_response = llm_responses[0]
+
+                            proof_future = gnatprove_executor.submit(
+                                self.extract_compile_and_log,
+                                llm_response,
+                                state["gpr_file_path"],
+                                state["benchmark_file_name"],
+                                state["response_number"],
+                                state["retry_counter"],
+                                original_package_body,
+                            )
+                            future_to_task[proof_future] = ("gnatprove", state)
+
+                        else:
+                            solution_found_flag, gnatprove_output_flag = completed_future.result()
+                            if solution_found_flag:
+                                break
+
+                            if state["retry_counter"] < self.retries:
+                                state["retry_counter"] += 1
+
+                                retry_prompt = ""
+                                response_number_counter = state["response_number"]
+                                attempt_gpr_path = state["gpr_file_path"]
+
+                                if gnatprove_output_flag and response_number_counter in self.gnatprove_output_dict:
+                                    llm_code, gnatprove_output = self.gnatprove_output_dict[response_number_counter]
+                                    retry_prompt = self.prompt.format(
+                                        dependencies=state["dependencies"], package_body=llm_code
+                                    )
+                                    retry_prompt = extract_mediums(attempt_gpr_path, gnatprove_output, retry_prompt)
+                                else:
+                                    retry_prompt = compile_and_append_stdout(attempt_gpr_path, retry_prompt)
+
+                                state["next_prompt"] = retry_prompt
+                                next_llm_future = llm_executor.submit(
+                                    self.invoke_llm, state["next_prompt"], self.gpt_model, 1
+                                )
+                                future_to_task[next_llm_future] = ("llm", state)
+                            else:
+                                state["active"] = False
+            finally:
+                for pending_future in future_to_task:
+                    pending_future.cancel()
+
+                llm_executor.shutdown(wait=True, cancel_futures=True)
+                gnatprove_executor.shutdown(wait=True, cancel_futures=True)
                        
         
         # End the run and log summary
