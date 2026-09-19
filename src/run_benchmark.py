@@ -235,28 +235,33 @@ class run_benchmark:
                             if state["retry_counter"] < self.retries:
                                 state["retry_counter"] += 1
 
-                                retry_prompt = ""
                                 response_number_counter = state["response_number"]
                                 attempt_gpr_path = state["gpr_file_path"]
 
-                                if gnatprove_output_flag and response_number_counter in self.gnatprove_output_dict:
+                                if response_number_counter in self.gnatprove_output_dict:
+                                    # The attempt directory holds the code of the last response of this
+                                    # branch that could be extracted, so that code is what the retry
+                                    # prompt has to show.
                                     llm_code, gnatprove_output = self.gnatprove_output_dict[response_number_counter]
                                     retry_prompt = self.prompt.format(
                                         dependencies=state["dependencies"], package_body=llm_code
                                     )
-                                    retry_prompt = extract_mediums(attempt_gpr_path, gnatprove_output, retry_prompt)
-                                elif response_number_counter in self.gnatprove_output_dict:
-                                    # An earlier iteration of this branch already wrote LLM code into
-                                    # the attempt directory, so it has to be proved again to describe
-                                    # what is currently on disk.
-                                    retry_prompt = compile_and_append_stdout(attempt_gpr_path, retry_prompt)
+
+                                    if gnatprove_output_flag:
+                                        retry_prompt = extract_mediums(attempt_gpr_path, gnatprove_output, retry_prompt)
+                                    else:
+                                        # The current response could not be extracted, so the directory
+                                        # still holds the code of an earlier iteration and has to be
+                                        # proved again to describe what is on disk.
+                                        retry_prompt = compile_and_append_stdout(attempt_gpr_path, retry_prompt)
                                 else:
                                     # Neither the code nor the filename could ever be extracted for this
-                                    # branch, so nothing was written to its attempt directory and the
-                                    # initial proof output still describes it exactly. Reusing that output
-                                    # avoids a redundant gnatprove run on the scheduler thread, which
-                                    # would stall the pipeline for the duration of a full proof.
-                                    retry_prompt = append_gnatprove_stdout(initial_gnatprove_output, retry_prompt)
+                                    # branch, so nothing was written to its attempt directory: it still
+                                    # holds the original package body, which the initial proof output
+                                    # describes exactly. Reusing that output also avoids a redundant
+                                    # gnatprove run on the scheduler thread, which would stall the
+                                    # pipeline for the duration of a full proof.
+                                    retry_prompt = append_gnatprove_stdout(initial_gnatprove_output, prompt_base)
 
                                 state["next_prompt"] = retry_prompt
                                 next_llm_future = llm_executor.submit(
