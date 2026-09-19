@@ -537,9 +537,26 @@ def compile_and_append_stdout(gpr_file_path: str, prompt: str) -> str:
     # Run gnatprove on the project
     output = run_gnatprove(gpr_file_path)
 
+    return append_gnatprove_stdout(output, prompt)
+
+
+def append_gnatprove_stdout(gnatprove_output: str, prompt: str) -> str:
+    """
+    Append an already available GnatProve output to the prompt. Same formatting as
+    compile_and_append_stdout, but for an output that has already been obtained, so that
+    a known-unchanged project does not have to be proved a second time.
+
+    Args:
+        gnatprove_output (str): The output from a previous gnatprove run
+        prompt (str): The prompt to send to the LLM
+
+    Returns:
+        str: A string containing the formatted_promt, with the output appended
+    """
+
     formatted_prompt = prompt + f"""\n
 The following is the output from GnatProve from the failed compilation of the above code: \n\n
-{output}
+{gnatprove_output}
 """
 
     return formatted_prompt

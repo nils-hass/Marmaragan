@@ -214,8 +214,18 @@ class run_benchmark:
                                         dependencies=state["dependencies"], package_body=llm_code
                                     )
                                     retry_prompt = extract_mediums(attempt_gpr_path, gnatprove_output, retry_prompt)
-                                else:
+                                elif response_number_counter in self.gnatprove_output_dict:
+                                    # An earlier iteration of this branch already wrote LLM code into
+                                    # the attempt directory, so it has to be proved again to describe
+                                    # what is currently on disk.
                                     retry_prompt = compile_and_append_stdout(attempt_gpr_path, retry_prompt)
+                                else:
+                                    # Neither the code nor the filename could ever be extracted for this
+                                    # branch, so nothing was written to its attempt directory and the
+                                    # initial proof output still describes it exactly. Reusing that output
+                                    # avoids a redundant gnatprove run on the scheduler thread, which
+                                    # would stall the pipeline for the duration of a full proof.
+                                    retry_prompt = append_gnatprove_stdout(initial_gnatprove_output, retry_prompt)
 
                                 state["next_prompt"] = retry_prompt
                                 next_llm_future = llm_executor.submit(
