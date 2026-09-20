@@ -243,6 +243,12 @@ class run_benchmark:
                                     # branch that could be extracted, so that code is what the retry
                                     # prompt has to show.
                                     llm_code, gnatprove_output = self.gnatprove_output_dict[response_number_counter]
+
+                                    # No code could be extracted from that response, so nothing was
+                                    # written and the directory still holds the original package body
+                                    if llm_code in ["", None]:
+                                        llm_code = original_package_body
+
                                     retry_prompt = self.prompt.format(
                                         dependencies=state["dependencies"], package_body=llm_code
                                     )
