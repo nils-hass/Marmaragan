@@ -596,6 +596,14 @@ Files successfully verified (at least one success): {files_verified} / {total_fi
             self.logger.error(
                 f"\n-----------------------------------\nError extracting code from response number: {project_name} - benchmark No.: {benchmark_file_name} - attempt: {response_number_counter} - retry: {retry_counter}\nCode: {llm_response}\n-----------------------------------\n\n")
 
+        # The response held several code blocks but none of them a complete package body, so there is
+        # nothing to write to the implementation file. Without this the attempt would be counted as a
+        # compiling one and gnatprove would be run over the file the response never changed.
+        if compile_success and llm_code in ["", None]:
+            compile_success = False
+            self.logger.error(
+                f"\n-----------------------------------\nNo complete package body in response number: {project_name} - benchmark No.: {benchmark_file_name} - attempt: {response_number_counter} - retry: {retry_counter}\nCode: {llm_response}\n-----------------------------------\n\n")
+
         # If code is not empty, extract the filename
         if llm_code not in ["", None]:
 
