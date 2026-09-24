@@ -1,5 +1,7 @@
 # Marmaragan
-Diplom Thesis by Lucian McIntyre
+Improvements upon the Diplom Thesis by Lucian McIntyre
+
+[Link to original repository where this code is forked from](https://github.com/Elocien/Marmaragan)
 
 ## Description
 Marmaragan attempts to leverage the power of LLM's to generate annotations for verifiable programs, for the SPARK2014 subset of ADA.
